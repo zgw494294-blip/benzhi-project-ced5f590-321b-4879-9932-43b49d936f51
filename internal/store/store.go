@@ -44,9 +44,27 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := store.seedPermitSerial(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) DB() *sql.DB { return s.db }
+
+// seedPermitSerial resumes permit serial allocation from the highest serial
+// number already committed in the database. Without this, reopening a Store
+// would reset the in-memory counter to 1 and collide with persisted permits
+// issued before the restart.
+func (s *Store) seedPermitSerial(ctx context.Context) error {
+	var maxSerial int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(serial_number), 0) FROM release_permits`).Scan(&maxSerial)
+	if err != nil {
+		return fmt.Errorf("读取已签发放行凭据序号: %w", err)
+	}
+	s.nextPermitSerial = maxSerial + 1
+	return nil
+}
