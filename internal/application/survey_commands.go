@@ -13,7 +13,7 @@ func (s *Service) AddSurvey(ctx context.Context, caseID string, command AddSurve
 	if command.ID == "" {
 		command.ID = audit.NewID("survey")
 	}
-	return s.mutate(ctx, caseID, "SURVEY_RECORDED", command.CommandMeta, []domain.Role{domain.RolePatrol},
+	return s.mutate(ctx, caseID, "SURVEY_RECORDED", command.CommandMeta, []domain.Role{domain.RolePatrol}, command,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			return restoration.AddObservation(domain.SurveyObservation{
 				ID: command.ID, Area: command.Area, ConditionCode: command.ConditionCode,
@@ -28,7 +28,7 @@ func (s *Service) CorrectSurvey(ctx context.Context, caseID string, command Corr
 		command.ID = audit.NewID("survey")
 	}
 	details := map[string]any{"reason": command.CorrectionReason, "area": command.Area}
-	return s.mutate(ctx, caseID, "SURVEY_CORRECTED", command.CommandMeta, []domain.Role{domain.RolePatrol},
+	return s.mutate(ctx, caseID, "SURVEY_CORRECTED", command.CommandMeta, []domain.Role{domain.RolePatrol}, command,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			err := restoration.CorrectObservation(domain.SurveyObservation{
 				ID: command.ID, Area: command.Area, ConditionCode: command.ConditionCode,
@@ -51,7 +51,7 @@ func (s *Service) CorrectSurvey(ctx context.Context, caseID string, command Corr
 }
 
 func (s *Service) CompleteSurvey(ctx context.Context, caseID string, meta CommandMeta) (*domain.RestorationCase, error) {
-	return s.mutate(ctx, caseID, "SURVEY_COMPLETED", meta, []domain.Role{domain.RolePatrol},
+	return s.mutate(ctx, caseID, "SURVEY_COMPLETED", meta, []domain.Role{domain.RolePatrol}, meta,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			return restoration.CompleteSurvey(now)
 		}, nil)
@@ -71,7 +71,7 @@ func riskID(observation domain.SurveyObservation) string {
 }
 
 func (s *Service) GenerateRisks(ctx context.Context, caseID string, meta CommandMeta) (*domain.RestorationCase, error) {
-	return s.mutate(ctx, caseID, "RISKS_GENERATED", meta, []domain.Role{domain.RolePatrol, domain.RolePlanner},
+	return s.mutate(ctx, caseID, "RISKS_GENERATED", meta, []domain.Role{domain.RolePatrol, domain.RolePlanner}, meta,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			_, err := restoration.GenerateRisks(now, func(observation domain.SurveyObservation) string {
 				candidate := riskID(observation)

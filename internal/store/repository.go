@@ -57,6 +57,10 @@ func (s *Store) List(ctx context.Context) ([]*domain.RestorationCase, error) {
 }
 
 func (s *Store) Transact(ctx context.Context, caseID string, expectedVersion int64, idempotencyKey, operation string, mutation Mutation) (*domain.RestorationCase, bool, error) {
+	return s.TransactWithDigest(ctx, caseID, expectedVersion, idempotencyKey, operation, "", mutation)
+}
+
+func (s *Store) TransactWithDigest(ctx context.Context, caseID string, expectedVersion int64, idempotencyKey, operation, requestDigest string, mutation Mutation) (*domain.RestorationCase, bool, error) {
 	if idempotencyKey == "" {
 		return nil, false, domain.NewError(domain.CodeValidation, "idempotencyKey 不能为空")
 	}
@@ -66,8 +70,15 @@ func (s *Store) Transact(ctx context.Context, caseID string, expectedVersion int
 	}
 	defer tx.Rollback()
 	var cached []byte
-	err = tx.QueryRowContext(ctx, `SELECT response_json FROM idempotency_records WHERE case_id = ? AND idempotency_key = ?`, caseID, idempotencyKey).Scan(&cached)
+	var cachedOperation, cachedDigest string
+	err = tx.QueryRowContext(ctx, `SELECT operation, request_digest, response_json FROM idempotency_records WHERE case_id = ? AND idempotency_key = ?`, caseID, idempotencyKey).Scan(&cachedOperation, &cachedDigest, &cached)
 	if err == nil {
+		if cachedOperation != operation {
+			return nil, false, domain.NewError(domain.CodeConflict, "幂等键 %s 已用于操作 %s，不能复用于 %s", idempotencyKey, cachedOperation, operation)
+		}
+		if requestDigest != "" && cachedDigest != "" && cachedDigest != requestDigest {
+			return nil, false, domain.NewError(domain.CodeConflict, "幂等键 %s 对应的请求内容与首次不一致，不能复用", idempotencyKey)
+		}
 		var result domain.RestorationCase
 		if err := json.Unmarshal(cached, &result); err != nil {
 			return nil, false, err
@@ -150,8 +161,8 @@ func (s *Store) Transact(ctx context.Context, caseID string, expectedVersion int
 			return nil, false, fmt.Errorf("签发放行凭据: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO idempotency_records(case_id, idempotency_key, operation, response_json, created_at) VALUES(?, ?, ?, ?, ?)`,
-		caseID, idempotencyKey, operation, encoded, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO idempotency_records(case_id, idempotency_key, operation, request_digest, response_json, created_at) VALUES(?, ?, ?, ?, ?, ?)`,
+		caseID, idempotencyKey, operation, requestDigest, encoded, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return nil, false, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -2,6 +2,9 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -37,12 +40,39 @@ func validateMeta(meta CommandMeta, allowed ...domain.Role) error {
 	return domain.NewError(domain.CodeForbidden, "角色 %s 无权执行此操作", meta.Role)
 }
 
-func (s *Service) mutate(ctx context.Context, caseID, operation string, meta CommandMeta, allowed []domain.Role, action func(*domain.RestorationCase, int64, time.Time) error, details map[string]any) (*domain.RestorationCase, error) {
+// requestDigest 计算请求内容的规范化摘要。摘要只覆盖决定操作意图的字段，
+// 排除 idempotencyKey 和 expectedVersion：idempotencyKey 是缓存键本身，
+// expectedVersion 属于并发控制元数据。同一操作下若命令内容不同，摘要必须不同，
+// 这样复用幂等键时可以识别内容冲突而不是错误重放缓存响应。
+func requestDigest(payload any) string {
+	if payload == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(encoded, &generic); err != nil {
+		return ""
+	}
+	delete(generic, "idempotencyKey")
+	delete(generic, "expectedVersion")
+	canonical, err := json.Marshal(generic)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Service) mutate(ctx context.Context, caseID, operation string, meta CommandMeta, allowed []domain.Role, requestPayload any, action func(*domain.RestorationCase, int64, time.Time) error, details map[string]any) (*domain.RestorationCase, error) {
 	if err := validateMeta(meta, allowed...); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
-	restoration, _, err := s.repository.Transact(ctx, caseID, meta.ExpectedVersion, meta.IdempotencyKey, operation,
+	digest := requestDigest(requestPayload)
+	restoration, _, err := s.repository.TransactWithDigest(ctx, caseID, meta.ExpectedVersion, meta.IdempotencyKey, operation, digest,
 		func(current *domain.RestorationCase, nextSerial int64) (*domain.RestorationCase, *domain.AuditEvent, error) {
 			if current == nil {
 				return nil, nil, domain.NewError(domain.CodeNotFound, "作业档案不存在")

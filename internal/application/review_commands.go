@@ -12,7 +12,7 @@ func (s *Service) ReviewMeasure(ctx context.Context, caseID string, command Revi
 	if command.ID == "" {
 		command.ID = audit.NewID("finding")
 	}
-	return s.mutate(ctx, caseID, "MEASURE_REVIEWED", command.CommandMeta, []domain.Role{domain.RoleReviewer},
+	return s.mutate(ctx, caseID, "MEASURE_REVIEWED", command.CommandMeta, []domain.Role{domain.RoleReviewer}, command,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			return restoration.RecordFinding(domain.ReviewFinding{
 				ID: command.ID, MeasureID: command.MeasureID, Decision: command.Decision,
@@ -31,14 +31,14 @@ func (s *Service) BatchReviewMeasures(ctx context.Context, caseID string, comman
 		findings[i] = domain.ReviewFinding{ID: item.ID, MeasureID: item.MeasureID, Decision: item.Decision, Issue: item.Issue, Reviewer: command.Actor}
 		details[i] = map[string]any{"measureId": item.MeasureID, "decision": item.Decision, "issue": item.Issue}
 	}
-	return s.mutate(ctx, caseID, "MEASURES_BATCH_REVIEWED", command.CommandMeta, []domain.Role{domain.RoleReviewer},
+	return s.mutate(ctx, caseID, "MEASURES_BATCH_REVIEWED", command.CommandMeta, []domain.Role{domain.RoleReviewer}, command,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			return restoration.RecordFindings(findings, now)
 		}, map[string]any{"items": details})
 }
 
 func (s *Service) AddRemediation(ctx context.Context, caseID string, command RemediationCommand) (*domain.RestorationCase, error) {
-	return s.mutate(ctx, caseID, "REMEDIATION_EVIDENCE_ADDED", command.CommandMeta, []domain.Role{domain.RolePlanner},
+	return s.mutate(ctx, caseID, "REMEDIATION_EVIDENCE_ADDED", command.CommandMeta, []domain.Role{domain.RolePlanner}, command,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			return restoration.AddRemediation(command.FindingID, command.Evidence, now)
 		},
@@ -46,7 +46,7 @@ func (s *Service) AddRemediation(ctx context.Context, caseID string, command Rem
 }
 
 func (s *Service) VerifyRemediation(ctx context.Context, caseID string, command VerificationCommand) (*domain.RestorationCase, error) {
-	return s.mutate(ctx, caseID, "REMEDIATION_VERIFIED", command.CommandMeta, []domain.Role{domain.RoleReviewer},
+	return s.mutate(ctx, caseID, "REMEDIATION_VERIFIED", command.CommandMeta, []domain.Role{domain.RoleReviewer}, command,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			return restoration.VerifyRemediation(command.FindingID, command.Actor, command.Decision, now)
 		},
@@ -54,7 +54,7 @@ func (s *Service) VerifyRemediation(ctx context.Context, caseID string, command 
 }
 
 func (s *Service) Freeze(ctx context.Context, caseID string, meta CommandMeta) (*domain.RestorationCase, error) {
-	return s.mutate(ctx, caseID, "VERSION_FROZEN", meta, []domain.Role{domain.RoleReviewer},
+	return s.mutate(ctx, caseID, "VERSION_FROZEN", meta, []domain.Role{domain.RoleReviewer}, meta,
 		func(restoration *domain.RestorationCase, _ int64, now time.Time) error {
 			manifest, err := audit.BuildManifest(restoration, meta.Actor, now)
 			if err != nil {
@@ -65,7 +65,7 @@ func (s *Service) Freeze(ctx context.Context, caseID string, meta CommandMeta) (
 }
 
 func (s *Service) Approve(ctx context.Context, caseID string, meta CommandMeta) (*domain.RestorationCase, error) {
-	return s.mutate(ctx, caseID, "PERMIT_ISSUED", meta, []domain.Role{domain.RoleReviewer},
+	return s.mutate(ctx, caseID, "PERMIT_ISSUED", meta, []domain.Role{domain.RoleReviewer}, meta,
 		func(restoration *domain.RestorationCase, serial int64, now time.Time) error {
 			if restoration.Frozen == nil {
 				return domain.NewError(domain.CodeState, "缺少冻结版本")

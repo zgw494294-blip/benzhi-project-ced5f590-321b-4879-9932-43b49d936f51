@@ -2,10 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var migrations = []string{
 	`CREATE TABLE IF NOT EXISTS schema_meta (
@@ -51,11 +52,34 @@ var migrations = []string{
         case_id TEXT NOT NULL,
         idempotency_key TEXT NOT NULL,
         operation TEXT NOT NULL,
+        request_digest TEXT NOT NULL DEFAULT '',
         response_json BLOB NOT NULL,
         created_at TEXT NOT NULL,
         PRIMARY KEY(case_id, idempotency_key)
     )`,
 	`CREATE INDEX IF NOT EXISTS idx_audit_case_sequence ON audit_events(case_id, sequence)`,
+}
+
+// ensureColumn adds a column to a table when it is missing, so that databases
+// created before the column was part of the CREATE TABLE statement are upgraded
+// in place without rebuilding the table. It is idempotent and safe to run on
+// every migration.
+func ensureColumn(ctx context.Context, tx *sql.Tx, table, column, definition string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return fmt.Errorf("检查列 %s.%s 是否存在: %w", table, column, err)
+	}
+	exists := rows.Next()
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("关闭列检查游标: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, definition)); err != nil {
+		return fmt.Errorf("为 %s 添加列 %s: %w", table, column, err)
+	}
+	return nil
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
@@ -68,6 +92,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("执行数据库迁移: %w", err)
 		}
+	}
+	if err := ensureColumn(ctx, tx, "idempotency_records", "request_digest", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	var current int
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_meta`).Scan(&current)

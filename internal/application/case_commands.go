@@ -18,7 +18,7 @@ func (s *Service) CreateCase(ctx context.Context, command CreateCaseCommand) (*d
 	if command.ID == "" {
 		command.ID = audit.NewID("case")
 	}
-	restoration, _, err := s.repository.Transact(ctx, command.ID, 0, command.IdempotencyKey, "CASE_CREATED",
+	restoration, _, err := s.repository.TransactWithDigest(ctx, command.ID, 0, command.IdempotencyKey, "CASE_CREATED", requestDigest(command),
 		func(current *domain.RestorationCase, _ int64) (*domain.RestorationCase, *domain.AuditEvent, error) {
 			if current != nil {
 				return nil, nil, domain.NewError(domain.CodeDuplicate, "作业档案已经存在")

@@ -108,6 +108,18 @@ type VerificationCommand struct {
 	Decision  domain.VerificationDecision `json:"decision"`
 }
 
+// deleteRiskPayload 和 submitReviewPayload 仅用于计算幂等请求摘要，分别捕获
+// 路径参数 riskId 与 revision，确保同一幂等键下请求内容不同时能被识别为冲突。
+type deleteRiskPayload struct {
+	CommandMeta
+	RiskID string `json:"riskId"`
+}
+
+type submitReviewPayload struct {
+	CommandMeta
+	Revision int `json:"revision"`
+}
+
 type CaseDetails struct {
 	Case             *domain.RestorationCase  `json:"case"`
 	Progress         CaseProgress             `json:"progress"`
