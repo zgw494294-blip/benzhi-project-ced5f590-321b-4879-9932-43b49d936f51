@@ -9,10 +9,22 @@ import (
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/domain"
 )
 
+// queryRunner abstracts the read methods used by append-only verification so the
+// same logic can run against either the shared connection or an in-flight
+// transaction.
+type queryRunner interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 func (s *Store) verifyAppendOnlyRecords(ctx context.Context, restoration *domain.RestorationCase) error {
+	return verifyAppendOnlyRecords(ctx, s.db, restoration)
+}
+
+func verifyAppendOnlyRecords(ctx context.Context, runner queryRunner, restoration *domain.RestorationCase) error {
 	if restoration.Frozen == nil {
 		var count int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM frozen_manifests WHERE case_id = ?`, restoration.ID).Scan(&count); err != nil {
+		if err := runner.QueryRowContext(ctx, `SELECT COUNT(*) FROM frozen_manifests WHERE case_id = ?`, restoration.ID).Scan(&count); err != nil {
 			return err
 		}
 		if count != 0 {
@@ -21,7 +33,7 @@ func (s *Store) verifyAppendOnlyRecords(ctx context.Context, restoration *domain
 	} else {
 		var archived []byte
 		var digest string
-		err := s.db.QueryRowContext(ctx, `SELECT manifest_json, content_digest FROM frozen_manifests WHERE case_id = ? AND frozen_version = ?`, restoration.ID, restoration.Frozen.FrozenVersion).Scan(&archived, &digest)
+		err := runner.QueryRowContext(ctx, `SELECT manifest_json, content_digest FROM frozen_manifests WHERE case_id = ? AND frozen_version = ?`, restoration.ID, restoration.Frozen.FrozenVersion).Scan(&archived, &digest)
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.NewError(domain.CodeIntegrity, "冻结清单未保存到只追加归档")
 		}
@@ -38,7 +50,7 @@ func (s *Store) verifyAppendOnlyRecords(ctx context.Context, restoration *domain
 	}
 	if restoration.Permit == nil {
 		var count int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM release_permits WHERE case_id = ?`, restoration.ID).Scan(&count); err != nil {
+		if err := runner.QueryRowContext(ctx, `SELECT COUNT(*) FROM release_permits WHERE case_id = ?`, restoration.ID).Scan(&count); err != nil {
 			return err
 		}
 		if count != 0 {
@@ -49,7 +61,7 @@ func (s *Store) verifyAppendOnlyRecords(ctx context.Context, restoration *domain
 	var archived []byte
 	var digest string
 	var serial int64
-	err := s.db.QueryRowContext(ctx, `SELECT permit_json, content_digest, serial_number FROM release_permits WHERE case_id = ? AND frozen_version = ?`, restoration.ID, restoration.Permit.FrozenVersion).Scan(&archived, &digest, &serial)
+	err := runner.QueryRowContext(ctx, `SELECT permit_json, content_digest, serial_number FROM release_permits WHERE case_id = ? AND frozen_version = ?`, restoration.ID, restoration.Permit.FrozenVersion).Scan(&archived, &digest, &serial)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NewError(domain.CodeIntegrity, "放行凭据未保存到不可变归档")
 	}

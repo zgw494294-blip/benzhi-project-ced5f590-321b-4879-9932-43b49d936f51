@@ -87,6 +87,11 @@ func (s *Store) Transact(ctx context.Context, caseID string, expectedVersion int
 	} else if err != nil {
 		return nil, false, err
 	}
+	if current != nil {
+		if err := verifyAppendOnlyRecords(ctx, tx, current); err != nil {
+			return nil, false, err
+		}
+	}
 	actualVersion := int64(0)
 	if current != nil {
 		actualVersion = current.Version
