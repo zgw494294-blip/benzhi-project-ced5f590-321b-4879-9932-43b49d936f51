@@ -113,6 +113,12 @@ func (c *RestorationCase) Clone() *RestorationCase {
 	copyCase.Risks = append([]RiskItem(nil), c.Risks...)
 	copyCase.Measures = append([]TreatmentMeasure(nil), c.Measures...)
 	copyCase.Findings = append([]ReviewFinding(nil), c.Findings...)
+	for i := range copyCase.Findings {
+		if c.Findings[i].ClosedAt != nil {
+			value := *c.Findings[i].ClosedAt
+			copyCase.Findings[i].ClosedAt = &value
+		}
+	}
 	if c.Frozen != nil {
 		value := *c.Frozen
 		copyCase.Frozen = &value

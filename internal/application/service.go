@@ -93,7 +93,10 @@ func (s *Service) Get(ctx context.Context, caseID string) (CaseDetails, error) {
 func (s *Service) List(ctx context.Context) ([]*domain.RestorationCase, error) {
 	s.listMu.RLock()
 	if s.listCached {
-		items := s.listCache
+		items := make([]*domain.RestorationCase, len(s.listCache))
+		for i, item := range s.listCache {
+			items[i] = item.Clone()
+		}
 		s.listMu.RUnlock()
 		return items, nil
 	}
@@ -102,7 +105,11 @@ func (s *Service) List(ctx context.Context) ([]*domain.RestorationCase, error) {
 	s.listMu.Lock()
 	defer s.listMu.Unlock()
 	if s.listCached {
-		return s.listCache, nil
+		items := make([]*domain.RestorationCase, len(s.listCache))
+		for i, item := range s.listCache {
+			items[i] = item.Clone()
+		}
+		return items, nil
 	}
 	items, err := s.repository.List(ctx)
 	if err != nil {
@@ -110,7 +117,11 @@ func (s *Service) List(ctx context.Context) ([]*domain.RestorationCase, error) {
 	}
 	s.listCache = items
 	s.listCached = true
-	return items, nil
+	result := make([]*domain.RestorationCase, len(items))
+	for i, item := range items {
+		result[i] = item.Clone()
+	}
+	return result, nil
 }
 
 func (s *Service) Integrity(ctx context.Context) (store.IntegrityStatus, error) {
