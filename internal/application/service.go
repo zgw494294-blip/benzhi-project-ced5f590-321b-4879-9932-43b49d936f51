@@ -19,9 +19,37 @@ type Service struct {
 }
 
 type caseReadFlight struct {
-	done    chan struct{}
-	details CaseDetails
-	err     error
+	done chan struct{}
+
+	mu         sync.Mutex
+	details    CaseDetails
+	err        error
+	alive      int
+	cancelRead context.CancelFunc
+}
+
+// register links a caller's context to this flight's lifetime. The shared
+// background read is canceled only once every registered caller has canceled,
+// so a single caller's cancellation never aborts the read for the others.
+// The returned stop function must be called when the caller leaves on its own
+// (i.e. it observed flight.done) so the context is no longer tracked.
+func (f *caseReadFlight) register(ctx context.Context) func() bool {
+	f.mu.Lock()
+	f.alive++
+	f.mu.Unlock()
+	stop := context.AfterFunc(ctx, func() {
+		f.mu.Lock()
+		f.alive--
+		if f.alive <= 0 {
+			select {
+			case <-f.done:
+			default:
+				f.cancelRead()
+			}
+		}
+		f.mu.Unlock()
+	})
+	return stop
 }
 
 func New(repository *store.Store) *Service {
@@ -74,27 +102,65 @@ func (s *Service) mutate(ctx context.Context, caseID, operation string, meta Com
 }
 
 func (s *Service) Get(ctx context.Context, caseID string) (CaseDetails, error) {
-	s.caseReadMu.Lock()
-	if flight, exists := s.caseReadFlights[caseID]; exists {
+	for {
+		s.caseReadMu.Lock()
+		if flight, exists := s.caseReadFlights[caseID]; exists {
+			select {
+			case <-flight.done:
+				// The in-flight read already finished; start a fresh read below
+				// rather than reusing a result that may have been aborted by
+				// every prior caller canceling.
+			default:
+				stop := flight.register(ctx)
+				s.caseReadMu.Unlock()
+				select {
+				case <-flight.done:
+					stop()
+					details, err := flight.details, flight.err
+					if err == nil || ctx.Err() != nil {
+						return details, err
+					}
+					// The shared read was aborted (e.g. all callers canceled)
+					// while this caller is still valid: retry on a new flight.
+					continue
+				case <-ctx.Done():
+					return CaseDetails{}, ctx.Err()
+				}
+			}
+		}
+		flight := &caseReadFlight{done: make(chan struct{})}
+		readCtx, cancelRead := context.WithCancel(context.Background())
+		flight.cancelRead = cancelRead
+		s.caseReadFlights[caseID] = flight
+		stop := flight.register(ctx)
 		s.caseReadMu.Unlock()
+
+		go func() {
+			details, err := s.loadCase(readCtx, caseID)
+			flight.mu.Lock()
+			flight.details, flight.err = details, err
+			close(flight.done)
+			flight.mu.Unlock()
+			s.caseReadMu.Lock()
+			delete(s.caseReadFlights, caseID)
+			s.caseReadMu.Unlock()
+			cancelRead()
+		}()
+
 		select {
 		case <-flight.done:
-			return flight.details, flight.err
+			stop()
+			details, err := flight.details, flight.err
+			if err == nil || ctx.Err() != nil {
+				return details, err
+			}
+			// The shared read was aborted while this caller is still valid:
+			// retry on a new flight.
+			continue
 		case <-ctx.Done():
 			return CaseDetails{}, ctx.Err()
 		}
 	}
-	flight := &caseReadFlight{done: make(chan struct{})}
-	s.caseReadFlights[caseID] = flight
-	s.caseReadMu.Unlock()
-
-	details, err := s.loadCase(ctx, caseID)
-	s.caseReadMu.Lock()
-	flight.details, flight.err = details, err
-	delete(s.caseReadFlights, caseID)
-	close(flight.done)
-	s.caseReadMu.Unlock()
-	return details, err
 }
 
 func (s *Service) loadCase(ctx context.Context, caseID string) (CaseDetails, error) {
