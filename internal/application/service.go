@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/audit"
@@ -11,11 +12,15 @@ import (
 )
 
 type Service struct {
-	repository *store.Store
-	now        func() time.Time
+	repository    *store.Store
+	now           func() time.Time
+	progressMu    sync.RWMutex
+	progressCache map[string]CaseProgress
 }
 
-func New(repository *store.Store) *Service { return &Service{repository: repository, now: time.Now} }
+func New(repository *store.Store) *Service {
+	return &Service{repository: repository, now: time.Now, progressCache: make(map[string]CaseProgress)}
+}
 
 func (s *Service) WithClock(clock func() time.Time) *Service {
 	s.now = clock
@@ -52,6 +57,9 @@ func (s *Service) mutate(ctx context.Context, caseID, operation string, meta Com
 			if err := action(next, nextSerial, now); err != nil {
 				return nil, nil, err
 			}
+			s.progressMu.Lock()
+			s.progressCache[caseID] = BuildProgress(next)
+			s.progressMu.Unlock()
 			event := audit.Event(operation, meta.Actor, meta.Role, before, next.Status, next.Version, now, details)
 			return next, &event, nil
 		})
@@ -67,8 +75,14 @@ func (s *Service) Get(ctx context.Context, caseID string) (CaseDetails, error) {
 	if err != nil {
 		return CaseDetails{}, err
 	}
+	progress := BuildProgress(restoration)
+	s.progressMu.RLock()
+	if cached, found := s.progressCache[caseID]; found {
+		progress = cached
+	}
+	s.progressMu.RUnlock()
 	return CaseDetails{
-		Case: restoration, Progress: BuildProgress(restoration), AuditTrail: events,
+		Case: restoration, Progress: progress, AuditTrail: events,
 		AuditIntegrity: audit.VerifyTrail(restoration, events), ManifestSummary: audit.InspectManifest(restoration),
 		Verification: audit.Verify(restoration), SurveyPreflight: restoration.SurveyPreflight(),
 		RiskWorklist: BuildRiskWorklist(restoration), ReviewProgress: BuildReviewProgress(restoration),
