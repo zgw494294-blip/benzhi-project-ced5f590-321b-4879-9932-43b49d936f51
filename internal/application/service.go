@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/audit"
@@ -11,11 +12,19 @@ import (
 )
 
 type Service struct {
-	repository *store.Store
-	now        func() time.Time
+	repository              *store.Store
+	now                     func() time.Time
+	permitVerificationMu    sync.RWMutex
+	permitVerificationCache map[int64]PermitVerificationView
 }
 
-func New(repository *store.Store) *Service { return &Service{repository: repository, now: time.Now} }
+func New(repository *store.Store) *Service {
+	return &Service{
+		repository:              repository,
+		now:                     time.Now,
+		permitVerificationCache: make(map[int64]PermitVerificationView),
+	}
+}
 
 func (s *Service) WithClock(clock func() time.Time) *Service {
 	s.now = clock

@@ -117,6 +117,18 @@ func (s *Service) VerifyPermitBySerial(ctx context.Context, serial int64) (Permi
 	if serial <= 0 {
 		return PermitVerificationView{}, domain.NewError(domain.CodeValidation, "凭据编号必须为正整数")
 	}
+	if err := ctx.Err(); err != nil {
+		return PermitVerificationView{}, err
+	}
+	s.permitVerificationMu.RLock()
+	cached, found := s.permitVerificationCache[serial]
+	s.permitVerificationMu.RUnlock()
+	if found {
+		caseRecord := domain.RestorationCase{WorkWindowStart: cached.WorkWindowStart, WorkWindowEnd: cached.WorkWindowEnd}
+		cached.WindowStatus = caseRecord.WorkWindowStatus(s.now())
+		cached.ReadyToStart = cached.Valid && cached.WindowStatus == domain.WindowActive
+		return cached, nil
+	}
 	archive, err := s.repository.LoadByPermitSerial(ctx, serial)
 	if err != nil {
 		return PermitVerificationView{}, err
@@ -135,5 +147,8 @@ func (s *Service) VerifyPermitBySerial(ctx context.Context, serial int64) (Permi
 		CaseID: caseRecord.ID, TreeCode: caseRecord.TreeCode, Location: caseRecord.Location, Owner: caseRecord.Owner,
 		ApprovedBy: archive.Permit.ApprovedBy, IssuedAt: archive.Permit.IssuedAt, FrozenVersion: archive.Permit.FrozenVersion,
 	}
+	s.permitVerificationMu.Lock()
+	s.permitVerificationCache[serial] = view
+	s.permitVerificationMu.Unlock()
 	return view, nil
 }
