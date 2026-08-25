@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/audit"
@@ -11,11 +13,18 @@ import (
 )
 
 type Service struct {
-	repository *store.Store
-	now        func() time.Time
+	repository          *store.Store
+	now                 func() time.Time
+	auditTrailCacheMu   sync.RWMutex
+	auditTrailCacheJSON map[string][]byte
 }
 
-func New(repository *store.Store) *Service { return &Service{repository: repository, now: time.Now} }
+func New(repository *store.Store) *Service {
+	return &Service{
+		repository: repository, now: time.Now,
+		auditTrailCacheJSON: make(map[string][]byte),
+	}
+}
 
 func (s *Service) WithClock(clock func() time.Time) *Service {
 	s.now = clock
@@ -63,7 +72,7 @@ func (s *Service) Get(ctx context.Context, caseID string) (CaseDetails, error) {
 	if err != nil {
 		return CaseDetails{}, err
 	}
-	events, err := s.repository.AuditTrail(ctx, caseID)
+	events, err := s.loadAuditTrail(ctx, caseID)
 	if err != nil {
 		return CaseDetails{}, err
 	}
@@ -74,6 +83,32 @@ func (s *Service) Get(ctx context.Context, caseID string) (CaseDetails, error) {
 		RiskWorklist: BuildRiskWorklist(restoration), ReviewProgress: BuildReviewProgress(restoration),
 		RemediationTodos: BuildRemediationTodos(restoration),
 	}, nil
+}
+
+func (s *Service) loadAuditTrail(ctx context.Context, caseID string) ([]domain.AuditEvent, error) {
+	s.auditTrailCacheMu.RLock()
+	encoded, found := s.auditTrailCacheJSON[caseID]
+	encoded = append([]byte(nil), encoded...)
+	s.auditTrailCacheMu.RUnlock()
+	if found {
+		var events []domain.AuditEvent
+		if err := json.Unmarshal(encoded, &events); err != nil {
+			return nil, err
+		}
+		return events, nil
+	}
+	events, err := s.repository.AuditTrail(ctx, caseID)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err = json.Marshal(events)
+	if err != nil {
+		return nil, err
+	}
+	s.auditTrailCacheMu.Lock()
+	s.auditTrailCacheJSON[caseID] = encoded
+	s.auditTrailCacheMu.Unlock()
+	return events, nil
 }
 
 func (s *Service) List(ctx context.Context) ([]*domain.RestorationCase, error) {
