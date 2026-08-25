@@ -34,5 +34,8 @@ func (s *Service) CreateCase(ctx context.Context, command CreateCaseCommand) (*d
 			event := audit.Event("CASE_CREATED", command.Actor, command.Role, "", next.Status, next.Version, now, map[string]any{"treeCode": next.TreeCode})
 			return next, &event, nil
 		})
+	if err == nil {
+		s.invalidateListCache()
+	}
 	return restoration, err
 }

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/audit"
@@ -13,6 +14,9 @@ import (
 type Service struct {
 	repository *store.Store
 	now        func() time.Time
+	listMu     sync.RWMutex
+	listCache  []*domain.RestorationCase
+	listCached bool
 }
 
 func New(repository *store.Store) *Service { return &Service{repository: repository, now: time.Now} }
@@ -20,6 +24,13 @@ func New(repository *store.Store) *Service { return &Service{repository: reposit
 func (s *Service) WithClock(clock func() time.Time) *Service {
 	s.now = clock
 	return s
+}
+
+func (s *Service) invalidateListCache() {
+	s.listMu.Lock()
+	s.listCache = nil
+	s.listCached = false
+	s.listMu.Unlock()
 }
 
 func validateMeta(meta CommandMeta, allowed ...domain.Role) error {
@@ -55,6 +66,9 @@ func (s *Service) mutate(ctx context.Context, caseID, operation string, meta Com
 			event := audit.Event(operation, meta.Actor, meta.Role, before, next.Status, next.Version, now, details)
 			return next, &event, nil
 		})
+	if err == nil {
+		s.invalidateListCache()
+	}
 	return restoration, err
 }
 
@@ -77,7 +91,26 @@ func (s *Service) Get(ctx context.Context, caseID string) (CaseDetails, error) {
 }
 
 func (s *Service) List(ctx context.Context) ([]*domain.RestorationCase, error) {
-	return s.repository.List(ctx)
+	s.listMu.RLock()
+	if s.listCached {
+		items := s.listCache
+		s.listMu.RUnlock()
+		return items, nil
+	}
+	s.listMu.RUnlock()
+
+	s.listMu.Lock()
+	defer s.listMu.Unlock()
+	if s.listCached {
+		return s.listCache, nil
+	}
+	items, err := s.repository.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.listCache = items
+	s.listCached = true
+	return items, nil
 }
 
 func (s *Service) Integrity(ctx context.Context) (store.IntegrityStatus, error) {
