@@ -51,6 +51,11 @@ func (s *Store) List(ctx context.Context) ([]*domain.RestorationCase, error) {
 		if err != nil {
 			return nil, err
 		}
+		if restoration.Frozen != nil {
+			if err := s.verifyAppendOnlyRecords(ctx, restoration); err != nil {
+				return nil, err
+			}
+		}
 		result = append(result, restoration)
 	}
 	return result, rows.Err()
