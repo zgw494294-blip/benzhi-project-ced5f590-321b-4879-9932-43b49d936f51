@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/audit"
@@ -11,11 +12,25 @@ import (
 )
 
 type Service struct {
-	repository *store.Store
-	now        func() time.Time
+	repository      *store.Store
+	now             func() time.Time
+	caseReadMu      sync.Mutex
+	caseReadFlights map[string]*caseReadFlight
 }
 
-func New(repository *store.Store) *Service { return &Service{repository: repository, now: time.Now} }
+type caseReadFlight struct {
+	done    chan struct{}
+	details CaseDetails
+	err     error
+}
+
+func New(repository *store.Store) *Service {
+	return &Service{
+		repository:      repository,
+		now:             time.Now,
+		caseReadFlights: make(map[string]*caseReadFlight),
+	}
+}
 
 func (s *Service) WithClock(clock func() time.Time) *Service {
 	s.now = clock
@@ -59,6 +74,30 @@ func (s *Service) mutate(ctx context.Context, caseID, operation string, meta Com
 }
 
 func (s *Service) Get(ctx context.Context, caseID string) (CaseDetails, error) {
+	s.caseReadMu.Lock()
+	if flight, exists := s.caseReadFlights[caseID]; exists {
+		s.caseReadMu.Unlock()
+		select {
+		case <-flight.done:
+			return flight.details, flight.err
+		case <-ctx.Done():
+			return CaseDetails{}, ctx.Err()
+		}
+	}
+	flight := &caseReadFlight{done: make(chan struct{})}
+	s.caseReadFlights[caseID] = flight
+	s.caseReadMu.Unlock()
+
+	details, err := s.loadCase(ctx, caseID)
+	s.caseReadMu.Lock()
+	flight.details, flight.err = details, err
+	delete(s.caseReadFlights, caseID)
+	close(flight.done)
+	s.caseReadMu.Unlock()
+	return details, err
+}
+
+func (s *Service) loadCase(ctx context.Context, caseID string) (CaseDetails, error) {
 	restoration, err := s.repository.Get(ctx, caseID)
 	if err != nil {
 		return CaseDetails{}, err
