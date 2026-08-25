@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>古树复壮作业放行台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">ANCIENT TREE · RELEASE CONTROL</p>
+      <h1>古树复壮作业放行台</h1>
+      <p class="subtitle">把每一项现场风险、处置措施和复核结论收拢成可核验的开工依据。</p>
+    </div>
+    <div class="operator-panel">
+      <label>当前操作者<input id="actor" value="示范巡护员" autocomplete="name"></label>
+      <label>职责角色
+        <select id="role">
+          <option value="PATROL">古树巡护员</option>
+          <option value="PLANNER">方案编制人员</option>
+          <option value="REVIEWER">保护复核人员</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <section class="case-strip surface">
+      <div>
+        <span class="label">当前作业</span>
+        <select id="case-picker"><option value="">请选择或新建档案</option></select>
+      </div>
+      <div id="case-summary" class="case-summary empty">尚未选择作业档案</div>
+      <button id="refresh" class="button secondary" type="button">刷新</button>
+    </section>
+
+    <div id="notice" class="notice" role="status" aria-live="polite"></div>
+
+    <section class="workflow" aria-label="作业流程">
+      <div data-stage="DRAFT">01 建档调查</div><span>→</span>
+      <div data-stage="SURVEY_COMPLETE">02 风险处置</div><span>→</span>
+      <div data-stage="IN_REVIEW">03 复核整改</div><span>→</span>
+      <div data-stage="FROZEN">04 版本冻结</div><span>→</span>
+      <div data-stage="RELEASED">05 开工放行</div>
+    </section>
+
+    <section class="layout">
+      <aside class="surface new-case-panel">
+        <div class="section-heading"><span>新建</span><h2>复壮作业档案</h2></div>
+        <form id="create-form" class="form-grid">
+          <label>古树编号<input name="treeCode" required placeholder="如 GS-2026-018"></label>
+          <label>保护等级<select name="protectionGrade"><option>一级</option><option>二级</option><option>三级</option></select></label>
+          <label class="wide">位置<input name="location" required placeholder="保护点位及可定位描述"></label>
+          <label>责任人<input name="owner" required></label>
+          <label>计划开始<input name="workWindowStart" type="datetime-local" required></label>
+          <label>计划结束<input name="workWindowEnd" type="datetime-local" required></label>
+          <button class="button primary wide" type="submit">创建草拟档案</button>
+        </form>
+      </aside>
+
+      <div id="operation-area" class="operation-stack muted-area">
+        <section class="surface operation" data-available="DRAFT">
+          <div class="section-heading"><span>01</span><h2>现场调查快照</h2></div>
+          <p class="hint">树冠、主干、根区和周边环境四类调查缺一不可，每项均需文本证据。</p>
+          <form id="survey-form" class="form-grid">
+            <label>调查区域<select name="area"><option value="CANOPY">树冠</option><option value="TRUNK">主干</option><option value="ROOT_ZONE">根区</option><option value="ENVIRONMENT">周边环境</option></select></label>
+            <label>现象编码<input name="conditionCode" required placeholder="如 枯枝/空洞/土壤板结"></label>
+            <label>严重度<select name="severity"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="CRITICAL">危急</option></select></label>
+            <label>影响范围<input name="extent" required placeholder="比例、方位或尺寸"></label>
+            <label class="wide">现场说明<textarea name="notes" required></textarea></label>
+            <label class="wide">文本证据<textarea name="evidence" required placeholder="照片编号、测量记录或现场描述；每行一条"></textarea></label>
+            <button class="button primary" type="submit">保存调查项</button>
+            <button id="complete-survey" class="button danger" type="button">确认调查范围完整</button>
+          </form>
+          <details>
+            <summary>更正既有调查记录</summary>
+            <form id="survey-correction-form" class="form-grid inset">
+              <label>被更正记录<select name="supersedesId" id="correction-survey" required></select></label>
+              <label>调查区域<select name="area"><option value="CANOPY">树冠</option><option value="TRUNK">主干</option><option value="ROOT_ZONE">根区</option><option value="ENVIRONMENT">周边环境</option></select></label>
+              <label class="wide">更正理由<textarea name="correctionReason" required></textarea></label>
+              <label>现象编码<input name="conditionCode" required></label>
+              <label>严重度<select name="severity"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="CRITICAL">危急</option></select></label>
+              <label>影响范围<input name="extent" required></label>
+              <label class="wide">现场说明<textarea name="notes" required></textarea></label>
+              <label class="wide">文本证据<textarea name="evidence" required placeholder="每行一条，不得与其他有效记录重复"></textarea></label>
+              <button class="button secondary" type="submit">保存更正记录</button>
+            </form>
+          </details>
+          <div id="survey-preflight" class="inset"></div>
+          <div id="survey-list" class="record-list"></div>
+        </section>
+
+        <section class="surface operation" data-available="SURVEY_COMPLETE">
+          <div class="section-heading"><span>02</span><h2>风险与处置方案</h2></div>
+          <div class="button-row"><button id="generate-risks" class="button primary" type="button">依据调查生成风险</button></div>
+          <details>
+            <summary>补充人工风险</summary>
+            <form id="risk-form" class="form-grid inset">
+              <label>风险类别<input name="category" required></label>
+              <label>严重度<select name="severity"><option value="LOW">低</option><option value="MEDIUM">中</option><option value="HIGH">高</option><option value="CRITICAL">危急</option></select></label>
+              <label>紧迫性<select name="urgency"><option value="ROUTINE">常规</option><option value="SOON">尽快</option><option value="IMMEDIATE">立即</option></select></label>
+              <label class="wide">补充理由<textarea name="rationale" required></textarea></label>
+              <button class="button secondary" type="submit">增加风险</button>
+            </form>
+          </details>
+          <div id="risk-stats" class="button-row"></div>
+          <form id="risk-batch-form">
+            <div id="risk-list" class="record-list"></div>
+            <button class="button secondary" type="submit">批量保存紧迫性复核</button>
+          </form>
+          <h3>逐项编制处置措施</h3>
+          <form id="measure-form" class="form-grid">
+            <label>关联风险<select name="riskId" id="measure-risk" required></select></label>
+            <label>修订号<input name="revision" type="number" min="1" value="1" required></label>
+            <label>实施顺序<input name="sequence" type="number" min="1" value="1" required></label>
+            <label class="wide">处置措施<textarea name="action" required></textarea></label>
+            <label class="wide">禁止事项<textarea name="prohibitions" required></textarea></label>
+            <label class="wide">验收标准<textarea name="acceptanceCriteria" required></textarea></label>
+            <button class="button primary" type="submit">保存措施</button>
+          </form>
+          <div id="measure-list" class="record-list"></div>
+          <form id="submit-review-form" class="inline-form">
+            <label>送审修订号<input name="revision" type="number" min="1" value="1" required></label>
+            <button class="button danger" type="submit">覆盖完整，提交复核</button>
+          </form>
+        </section>
+
+        <section class="surface operation" data-available="IN_REVIEW,REMEDIATION,REVIEW_PASSED">
+          <div class="section-heading"><span>03</span><h2>复核、整改与复验</h2></div>
+          <form id="review-form" class="form-grid">
+            <label>送审措施<select name="measureId" id="review-measure" required></select></label>
+            <label>复核结论<select name="decision"><option value="PASS">通过</option><option value="RETURN">退回</option></select></label>
+            <label class="wide">退回问题<textarea name="issue" placeholder="选择退回时必填"></textarea></label>
+            <button class="button primary" type="submit">登记逐项结论</button>
+          </form>
+          <form id="batch-review-form">
+            <h3>当前修订批量结论</h3>
+            <div id="batch-review-list" class="record-list"></div>
+            <button class="button primary" type="submit">原子登记所选结论</button>
+          </form>
+          <form id="remediation-form" class="form-grid">
+            <label>退回项<select name="findingId" id="remediation-finding" required></select></label>
+            <label class="wide">整改证据<textarea name="evidence" required></textarea></label>
+            <button class="button secondary" type="submit">提交整改证据</button>
+          </form>
+          <form id="verify-form" class="inline-form">
+            <label>待复验项<select name="findingId" id="verify-finding" required></select></label>
+            <label>复验结论<select name="decision"><option value="PASS">闭环通过</option><option value="FAIL">复验不通过</option></select></label>
+            <button class="button danger" type="submit">记录复验</button>
+          </form>
+          <div id="finding-list" class="record-list"></div>
+          <h3>整改待办</h3>
+          <div id="remediation-todos" class="record-list"></div>
+        </section>
+
+        <section class="surface operation release-panel" data-available="REVIEW_PASSED,FROZEN,RELEASED">
+          <div class="section-heading"><span>04—05</span><h2>冻结与开工放行</h2></div>
+          <p class="hint">冻结会规范化汇总调查、风险、措施与复核事实并计算摘要。冻结后内容不可修改。</p>
+          <div class="button-row">
+            <button id="freeze" class="button danger" type="button">冻结已通过版本</button>
+            <button id="approve" class="button primary" type="button">批准并签发凭据</button>
+            <button id="verify-permit" class="button secondary" type="button">重新核验凭据</button>
+          </div>
+          <div id="permit-card" class="permit-card empty">尚无放行凭据</div>
+          <form id="serial-permit-form" class="inline-form serial-lookup">
+            <label>凭据编号<input name="serial" type="number" min="1" step="1" required placeholder="完整递增编号"></label>
+            <button class="button secondary" type="submit">按编号现场核验</button>
+          </form>
+          <div id="serial-permit-result" class="permit-card empty">输入凭据编号核验完整性与计划作业窗口。</div>
+        </section>
+
+        <section class="surface operation">
+          <div class="section-heading"><span>轨迹</span><h2>完整审计记录</h2></div>
+          <div id="audit-list" class="timeline"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <footer>本台仅签发已闭环风险对应的不可变开工凭据 · 所有写入均带版本检查与幂等键</footer>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
