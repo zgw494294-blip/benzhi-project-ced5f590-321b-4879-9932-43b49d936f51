@@ -5,12 +5,17 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db               *sql.DB
+	permitSerialMu   sync.Mutex
+	nextPermitSerial int64
+}
 
 func Open(path string) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
@@ -28,7 +33,7 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetConnMaxLifetime(0)
-	store := &Store{db: db}
+	store := &Store{db: db, nextPermitSerial: 1}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {

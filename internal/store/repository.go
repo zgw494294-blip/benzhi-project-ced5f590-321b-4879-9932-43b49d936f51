@@ -94,10 +94,9 @@ func (s *Store) Transact(ctx context.Context, caseID string, expectedVersion int
 	if actualVersion != expectedVersion {
 		return nil, false, domain.NewError(domain.CodeConflict, "版本冲突：期望 %d，实际 %d", expectedVersion, actualVersion)
 	}
-	var nextSerial int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(serial_number), 0) + 1 FROM release_permits`).Scan(&nextSerial); err != nil {
-		return nil, false, err
-	}
+	s.permitSerialMu.Lock()
+	nextSerial := s.nextPermitSerial
+	defer s.permitSerialMu.Unlock()
 	next, event, err := mutation(current, nextSerial)
 	if err != nil {
 		return nil, false, err
@@ -156,6 +155,9 @@ func (s *Store) Transact(ctx context.Context, caseID string, expectedVersion int
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, false, err
+	}
+	if next.Permit != nil && (current == nil || current.Permit == nil) {
+		s.nextPermitSerial++
 	}
 	return next, false, nil
 }
