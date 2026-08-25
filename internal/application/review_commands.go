@@ -6,6 +6,7 @@ import (
 
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/audit"
 	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/domain"
+	"benzhi-project-ced5f590-321b-4879-9932-43b49d936f51/internal/store"
 )
 
 func (s *Service) ReviewMeasure(ctx context.Context, caseID string, command ReviewCommand) (*domain.RestorationCase, error) {
@@ -118,6 +119,9 @@ func (s *Service) VerifyPermitBySerial(ctx context.Context, serial int64) (Permi
 		return PermitVerificationView{}, domain.NewError(domain.CodeValidation, "凭据编号必须为正整数")
 	}
 	archive, err := s.repository.LoadByPermitSerial(ctx, serial)
+	if err != nil && ctx.Err() != nil {
+		archive, err = s.reloadPermitArchive(serial)
+	}
 	if err != nil {
 		return PermitVerificationView{}, err
 	}
@@ -136,4 +140,10 @@ func (s *Service) VerifyPermitBySerial(ctx context.Context, serial int64) (Permi
 		ApprovedBy: archive.Permit.ApprovedBy, IssuedAt: archive.Permit.IssuedAt, FrozenVersion: archive.Permit.FrozenVersion,
 	}
 	return view, nil
+}
+
+func (s *Service) reloadPermitArchive(serial int64) (store.PermitArchive, error) {
+	recoveryCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return s.repository.LoadByPermitSerial(recoveryCtx, serial)
 }
